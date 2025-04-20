@@ -1,2 +1,7 @@
 // Configuration accessible côté client
-window.n8nWebhookUrl = 'https://yannmti.app.n8n.cloud/webhook-test/a958d501-dee4-49ab-a4cb-f665c8069626';
+// Les clés sensibles doivent être chargées depuis les variables d'environnement (.env.local)
+// Ce fichier ne doit contenir que des configurations non-sensibles
+window.appConfig = {
+  version: '1.0.0',
+  environment: 'production'
+};

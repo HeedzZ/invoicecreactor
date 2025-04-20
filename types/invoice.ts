@@ -35,6 +35,7 @@ export interface Company {
   email?: string;
   phone?: string;
   website?: string;
+  logo?: string; // URL ou chaîne base64 de l'image du logo
 }
 
 export interface PaymentTerms {

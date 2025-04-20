@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { ArticleTable } from "@/components/Facture/ArticleTable";
 import { ClientForm } from "@/components/Facture/ClientForm";
 import { CompanyForm } from "@/components/Facture/CompanyForm";
@@ -88,12 +88,18 @@ export default function Home() {
   const [total, setTotal] = useState(0);
   const [validationErrors, setValidationErrors] = useState<string[]>([]);
   const [isTestingConnection, setIsTestingConnection] = useState(false);
+  const [currentInvoiceNumber, setCurrentInvoiceNumber] = useState<string>("");
   
   const formRef = useRef<HTMLFormElement>(null);
 
   const getNextInvoiceNumber = () => {
-    return "INV-000008";
+    return currentInvoiceNumber || "INV-000008";
   };
+  
+  // Initialiser le numéro de facture au chargement
+  useEffect(() => {
+    setCurrentInvoiceNumber("INV-000008");
+  }, []);
 
   const validateForm = (): boolean => {
     const errors: string[] = [];
@@ -148,6 +154,17 @@ export default function Home() {
     
     // Créer le document PDF
     const doc = new jsPDF();
+    
+    // Ajouter le logo si disponible
+    if (company.logo) {
+      try {
+        // Ajouter le logo en haut à droite
+        doc.addImage(company.logo, 'JPEG', 140, 10, 50, 25, undefined, 'FAST');
+      } catch (error) {
+        console.error('❌ Erreur lors de l\'ajout du logo au PDF:', error);
+        // Continuer sans le logo en cas d'erreur
+      }
+    }
     
     // Informations de l'émetteur (en-tête)
     doc.setFontSize(10);
@@ -256,18 +273,23 @@ export default function Home() {
     console.log('🔄 Début du test de connexion à n8n...');
     
     try {
-      // Récupérer l'URL du webhook directement
-      let webhookUrl = '';
+      // Récupérer l'URL du webhook depuis les variables d'environnement
+      let webhookUrl = getEnvVar('NEXT_PUBLIC_N8N_WEBHOOK_URL', '');
       
-      // Vérifie si window est défini (côté client) et si l'URL est disponible
+      // Vérifie si l'URL du webhook est disponible
+      if (!webhookUrl) {
+        console.warn('⚠️ URL du webhook non disponible dans les variables d\'environnement');
+        
+        // Fallback sur l'URL globale si disponible
       if (typeof window !== 'undefined' && window.n8nWebhookUrl) {
         webhookUrl = window.n8nWebhookUrl;
-        console.log('🔎 Utilisation de l\'URL du webhook depuis la variable globale:', webhookUrl);
+          console.log('🔎 Fallback: Utilisation de l\'URL du webhook depuis la variable globale');
       } else {
-        // Fallback à l'URL en dur si la variable globale n'est pas disponible
-        webhookUrl = 'https://yannmti.app.n8n.cloud/webhook-test/a958d501-dee4-49ab-a4cb-f665c8069626';
-        console.log('🔎 Utilisation de l\'URL du webhook en dur:', webhookUrl);
+          throw new Error("URL du webhook non configurée. Veuillez configurer NEXT_PUBLIC_N8N_WEBHOOK_URL dans le fichier .env.local");
+        }
       }
+      
+      console.log('🔎 Utilisation de l\'URL du webhook:', webhookUrl);
       
       // Test simple avec fetch
       console.log('🔄 Test avec fetch...');
@@ -311,18 +333,63 @@ export default function Home() {
   // Fonction pour envoyer la facture à n8n
   const sendInvoiceToN8n = async (invoiceData: Invoice, pdfBase64?: string): Promise<boolean> => {
     try {
-      // Récupérer l'URL du webhook directement
-      let webhookUrl = '';
+      // Récupérer l'URL du webhook depuis les variables d'environnement
+      let webhookUrl = getEnvVar('NEXT_PUBLIC_N8N_WEBHOOK_URL', '');
       
-      // Vérifie si window est défini (côté client) et si l'URL est disponible
+      // Vérifie si l'URL du webhook est disponible
+      if (!webhookUrl) {
+        console.warn('⚠️ URL du webhook non disponible dans les variables d\'environnement');
+        
+        // Fallback sur l'URL globale si disponible
       if (typeof window !== 'undefined' && window.n8nWebhookUrl) {
         webhookUrl = window.n8nWebhookUrl;
-        console.log('🔎 Utilisation de l\'URL du webhook depuis la variable globale:', webhookUrl);
+          console.log('🔎 Fallback: Utilisation de l\'URL du webhook depuis la variable globale');
       } else {
-        // Fallback à l'URL en dur si la variable globale n'est pas disponible
-        webhookUrl = 'https://yannmti.app.n8n.cloud/webhook-test/a958d501-dee4-49ab-a4cb-f665c8069626';
-        console.log('🔎 Utilisation de l\'URL du webhook en dur:', webhookUrl);
+          throw new Error("URL du webhook non configurée. Veuillez configurer NEXT_PUBLIC_N8N_WEBHOOK_URL dans le fichier .env.local");
+        }
       }
+      
+      console.log('🔎 Utilisation de l\'URL du webhook:', webhookUrl);
+      
+      // Vérifications de sécurité pour les champs optionnels
+      if (!invoiceData.company) {
+        throw new Error("Données de l'entreprise manquantes");
+      }
+      
+      if (!invoiceData.paymentTerms) {
+        throw new Error("Conditions de paiement manquantes");
+      }
+      
+      // Vérifications et normalisations des champs optionnels pour assurer la cohérence
+      
+      // 1. S'assurer que l'objet company a tous les champs optionnels initialisés s'ils sont undefined
+      const normalizedCompany = {
+        ...invoiceData.company,
+        email: invoiceData.company.email || "",
+        phone: invoiceData.company.phone || "",
+        website: invoiceData.company.website || "",
+        logo: invoiceData.company.logo || "",
+        capital: invoiceData.company.capital || ""
+      };
+      
+      // 2. S'assurer que les coordonnées bancaires existent toujours si le mode de paiement est "Virement bancaire"
+      let normalizedPaymentTerms = { ...invoiceData.paymentTerms };
+      if (normalizedPaymentTerms.method === "Virement bancaire" && !normalizedPaymentTerms.bankDetails) {
+        normalizedPaymentTerms.bankDetails = { bankName: "", iban: "", bic: "" };
+      }
+      
+      // 3. Normaliser earlyPaymentDiscount pour qu'il soit toujours défini avec une valeur par défaut
+      if (normalizedPaymentTerms.earlyPaymentDiscount === undefined) {
+        normalizedPaymentTerms.earlyPaymentDiscount = 0;
+      }
+      
+      // 4. S'assurer que les champs optionnels du client sont initialisés
+      const normalizedClient = {
+        ...invoiceData.client,
+        email: invoiceData.client.email || "",
+        vatNumber: invoiceData.client.vatNumber || "",
+        siret: invoiceData.client.siret || ""
+      };
       
       // Préparation des données d'articles avec conversion explicite des valeurs numériques
       const articlesData = invoiceData.articles.map(article => ({
@@ -334,7 +401,7 @@ export default function Home() {
         amount: Number(article.amount)
       }));
       
-      // Création d'un payload complet avec toutes les informations
+      // Création d'un payload complet avec toutes les informations normalisées
       const completeInvoice = {
         // Informations de base de la facture
         id: invoiceData.id,
@@ -342,44 +409,17 @@ export default function Home() {
         date: format(invoiceData.date, "yyyy-MM-dd"),
         status: invoiceData.status,
         
-        // Informations client complètes
-        client: {
-          id: invoiceData.client.id,
-          name: invoiceData.client.name,
-          email: invoiceData.client.email,
-          address: invoiceData.client.address,
-          vatNumber: invoiceData.client.vatNumber,
-          siret: invoiceData.client.siret
-        },
+        // Informations client complètes et normalisées
+        client: normalizedClient,
         
-        // Informations entreprise complètes
-        company: {
-          name: invoiceData.company.name,
-          address: invoiceData.company.address,
-          siret: invoiceData.company.siret,
-          rcs: invoiceData.company.rcs,
-          legalForm: invoiceData.company.legalForm,
-          capital: invoiceData.company.capital,
-          vatNumber: invoiceData.company.vatNumber,
-          isVatExempt: invoiceData.company.isVatExempt,
-          email: invoiceData.company.email,
-          phone: invoiceData.company.phone
-        },
+        // Informations entreprise complètes et normalisées
+        company: normalizedCompany,
         
         // Articles convertis en nombres
         articles: articlesData,
         
-        // Informations de paiement
-        paymentTerms: {
-          daysLimit: Number(invoiceData.paymentTerms.daysLimit),
-          method: invoiceData.paymentTerms.method,
-          latePaymentPenalty: Number(invoiceData.paymentTerms.latePaymentPenalty),
-          lumpSumCompensation: Number(invoiceData.paymentTerms.lumpSumCompensation),
-          earlyPaymentDiscount: invoiceData.paymentTerms.earlyPaymentDiscount 
-            ? Number(invoiceData.paymentTerms.earlyPaymentDiscount) 
-            : undefined,
-          bankDetails: invoiceData.paymentTerms.bankDetails
-        },
+        // Informations de paiement normalisées
+        paymentTerms: normalizedPaymentTerms,
         
         // Totaux
         subtotal: Number(invoiceData.subtotal),
@@ -390,6 +430,9 @@ export default function Home() {
         dueDate: invoiceData.dueDate ? format(invoiceData.dueDate, "yyyy-MM-dd") : undefined,
         notes: invoiceData.notes
       };
+      
+      // Log pour débogage
+      console.log('📦 Données normalisées à envoyer:', JSON.stringify(completeInvoice, null, 2));
       
       // Préparation du payload final
       const payload = { 
@@ -410,43 +453,49 @@ export default function Home() {
       
       console.log('📥 Statut de la réponse:', response.status, response.statusText);
       
-      // Traitement de la réponse
-      const responseText = await response.text();
-      console.log('📥 Corps de la réponse:', responseText.substring(0, 200));
-      
       if (!response.ok) {
         throw new Error(`Erreur HTTP: ${response.status} ${response.statusText}`);
       }
       
-      // Si PDF disponible et première requête réussie, envoyer le PDF séparément
-      if (pdfBase64 && response.ok) {
-        console.log('📄 Envoi du PDF...');
-        try {
-          const pdfPayload = {
-            invoiceId: invoiceData.id,
-            invoiceNumber: invoiceData.number,
-            pdf: pdfBase64.split(',')[1] || pdfBase64,
-            timestamp: Date.now()
-          };
-          
-          const pdfResponse = await fetch(webhookUrl, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(pdfPayload)
-          });
-          
-          console.log('📄 Statut de l\'envoi du PDF:', pdfResponse.status);
-          
-          if (!pdfResponse.ok) {
-            console.warn('⚠️ L\'envoi du PDF a échoué, mais les données de la facture ont été envoyées');
-          }
-        } catch (pdfError) {
-          console.warn('⚠️ Erreur lors de l\'envoi du PDF:', pdfError);
-        }
-      }
+      // Traitement de la réponse - maintenant on attend un PDF binaire
+      console.log('📥 Réception du PDF en réponse...');
       
-      alert('Facture envoyée avec succès à n8n !');
-      return true;
+      try {
+        // Récupérer le contenu binaire comme un blob
+        const pdfBlob = await response.blob();
+        
+        // Vérifier que c'est bien un PDF
+        if (pdfBlob.type !== 'application/pdf') {
+          console.warn('⚠️ La réponse n\'est pas un PDF:', pdfBlob.type);
+        }
+        
+        // Créer une URL pour le blob
+        const pdfUrl = URL.createObjectURL(pdfBlob);
+        
+        // Stocker l'URL du PDF pour un usage ultérieur
+        setPdfUrl(pdfUrl);
+        
+        // Activer la prévisualisation du PDF dans l'application
+        setShowPdfPreview(true);
+        
+        // Afficher un message de confirmation avec les options
+        const openInNewTab = window.confirm(
+          'Facture traitée avec succès ! Le PDF est maintenant visible dans l\'application. Voulez-vous également l\'ouvrir dans un nouvel onglet ?'
+        );
+        
+        // Si l'utilisateur souhaite ouvrir dans un nouvel onglet, le faire
+        if (openInNewTab) {
+          console.log('🌐 Ouverture du PDF dans un nouvel onglet (choix utilisateur)');
+          window.open(pdfUrl, '_blank');
+        }
+        
+        // Succès
+        return true;
+      } catch (pdfError: any) {
+        console.error('❌ Erreur lors du traitement du PDF:', pdfError);
+        alert(`Erreur lors du traitement du PDF: ${pdfError.message}`);
+        return false;
+      }
     } catch (error: any) {
       console.error('❌ Erreur lors de l\'envoi à n8n:', error);
       console.error('Détails de l\'erreur:', error.message);
@@ -487,13 +536,21 @@ export default function Home() {
         console.log('Articles convertis:', convertedArticles);
       }
       
+      // S'assurer que toutes les structures nécessaires sont correctement initialisées
+      const paymentTermsData = paymentTerms ? { ...paymentTerms } : null;
+      if (paymentTermsData && !paymentTermsData.bankDetails) {
+        paymentTermsData.bankDetails = { bankName: "", iban: "", bic: "" };
+      }
+      
+      const companyData = company ? { ...company } : null;
+      
       // Créer l'objet facture complet
       const invoiceData: Invoice = {
         id: "temp-" + Date.now(),
         number: getNextInvoiceNumber(),
         date: date,
         client: client!,
-        company: company!,
+        company: companyData!,
         articles: articles.map(article => ({
           ...article,
           quantity: Number(article.quantity),
@@ -504,9 +561,9 @@ export default function Home() {
         subtotal: Number(subtotal),
         taxTotal: Number(taxTotal),
         total: Number(total),
-        paymentTerms: paymentTerms!,
+        paymentTerms: paymentTermsData!,
         status: 'draft',
-        dueDate: addDays(date, paymentTerms?.daysLimit || 30)
+        dueDate: addDays(date, paymentTermsData?.daysLimit || 30)
       };
       
       // Générer le PDF
@@ -516,9 +573,10 @@ export default function Home() {
       // Envoyer à n8n
       const sent = await sendInvoiceToN8n(invoiceData, pdfDataUrl);
       
-      if (sent) {
-        alert('Facture envoyée avec succès à n8n !');
-      }
+      // L'alerte est maintenant gérée dans sendInvoiceToN8n, pas besoin d'en afficher une autre ici
+      // if (sent) {
+      //   alert('Facture envoyée avec succès à n8n !');
+      // }
     } catch (error: any) {
       console.error('❌ ERREUR LORS DE LA GÉNÉRATION DU PDF:', error);
       alert(`Erreur lors de la génération du PDF: ${error.message}`);
@@ -564,6 +622,7 @@ export default function Home() {
           date={date}
           onClientChange={setClient}
           onDateChange={setDate}
+          onInvoiceNumberChange={setCurrentInvoiceNumber}
         />
         
         <PaymentTermsForm
