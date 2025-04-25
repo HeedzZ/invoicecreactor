@@ -1,4 +1,3 @@
-InvoiceCreator
 InvoiceCreator is a personal project built with React to practice and learn modern web development concepts.
 It connects to a n8n workflow to fetch invoice information and generates a PDF invoice automatically.
 
